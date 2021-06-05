@@ -1,11 +1,15 @@
 import io
 import os
 import re
+import logging
+import time
 from glob import glob
 from hashlib import sha256
 from pathlib import Path
 from typing import Optional
 
+
+logging.basicConfig(level=logging.DEBUG)
 
 OUTPATH="public"
 
@@ -125,18 +129,17 @@ def manifest_url_hash(name):
 def game_url_hash(hexdigest):
   return b62encode(int.from_bytes(bytes.fromhex(hexdigest), "big"))[:8]
 
-def html_page(body: str):
-  return """<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Preservation — byuu.org</title>
-</head>
-<body>
-  {}
-</body>
-</html>
-""".format(body)
+def write_html(file, writer):
+  file.write('<!DOCTYPE html>')
+  file.write('<html lang="en">')
+  file.write('<head>')
+  file.write('<meta charset="utf-8">')
+  file.write('<title>Preservation — byuu.org</title>')
+  file.write('</head>')
+  file.write('<body>')
+  writer(file)
+  file.write('</body>')
+  file.write('</html>')
 
 class Board:
   def __init__(self, parent, manifest: Node):
@@ -145,7 +148,7 @@ class Board:
     self.manifest = manifest
 
   def url(self):
-    return '{self.parent.url()}/{}'.format(self.hash)
+    return f'{self.parent.url()}/{self.hash}'
 
 class BoardList:
   def __init__(self, name, manifest: Node):
@@ -155,20 +158,29 @@ class BoardList:
     self.boards = [Board(self, board) for board in manifest.elements('board')]
     self.manifest = manifest
 
-  def html(self):
-    html = '<section><header>{}<span>{}</span></header>'.format(self.name, self.revision)
-    html += '<div>Total: {}</div>'.format(len(self.boards))
-    html += '<table><thead><tr><th>Name</th><tbody>'
+  def write(self, file):
+    file.write('<section>')
+    file.write(f'<header>{self.name}<span>{self.revision}</span></header>')
+    file.write(f'<div>Total: {len(self.boards)}</div>')
+    file.write('<table>')
+    file.write('<thead>')
+    file.write('<tr>')
+    file.write('<th>Name</th>')
+    file.write('</tr>')
+    file.write('</thead>')
+    file.write('<tbody>')
     for board in self.boards:
-      html += '<tr>'
-      html += '<td>{}</td>'.format(board.name)
-      html += '</tr>'
-    html += '</tbody></table></section>'
-    return html
+      file.write('<tr>')
+      file.write(f'<td>{board.name}</td>')
+      file.write('</tr>')
+    file.write('</tbody>')
+    file.write('</table>')
+    file.write('</section>')
 
   def generate(self):
-    Path(os.path.join(OUTPATH, "boards", self.hash)).mkdir(parents=True, exist_ok=True)
-    Path(os.path.join(OUTPATH, "boards", self.hash, "index.html")).open("w").write(html_page(self.html()))
+    outdir = Path(OUTPATH, "boards", self.hash)
+    outdir.mkdir(parents=True, exist_ok=True)
+    write_html(Path(outdir, "index.html").open("w"), self.write)
 
   def url(self):
     return f'/boards/{self.hash}'
@@ -190,12 +202,13 @@ class Game:
         size += int(component.path("size").text(), 16)
     return size
 
-  def html(self):
-    return 'TODO'
+  def write(self, file):
+    file.write('TODO')
 
   def generate(self):
-    Path(os.path.join(OUTPATH, "games", self.parent.hash, self.hash)).mkdir(parents=True, exist_ok=True)
-    Path(os.path.join(OUTPATH, "games", self.parent.hash, self.hash, "index.html")).open("w").write(html_page(self.html()))
+    outdir = Path(OUTPATH, "games", self.parent.hash, self.hash)
+    outdir.mkdir(parents=True, exist_ok=True)
+    write_html(Path(outdir, "index.html").open("w"), self.write)
 
   def url(self):
     return f'{self.parent.url()}/{self.hash}'
@@ -208,27 +221,40 @@ class GameList:
     self.manifest = manifest
     self.games = [Game(self, game) for game in manifest.elements('game')]
 
-  def html(self):
-    html = '<section><header>{}<span>{}</span></header>'.format(self.name, self.revision)
-    html += '<div>Total: {}</div>'.format(len(self.games))
-    html += '<table><thead><tr><th>Name</th><th>Region</th><th>Revision</th><th>Board</th><th>Size</th></tr></thead><tbody>'
+  def write(self, file):
+    file.write('<section>')
+    file.write(f'<header>{self.name}<span>{self.revision}</span></header>')
+    file.write(f'<div>Total: {len(self.games)}</div>')
+    file.write('<table>')
+    file.write('<thead>')
+    file.write('<tr>')
+    file.write('<th>Name</th>')
+    file.write('<th>Region</th>')
+    file.write('<th>Revision</th>')
+    file.write('<th>Board</th>')
+    file.write('<th>Size</th>')
+    file.write('</tr>')
+    file.write('</thead>')
+    file.write('<tbody>')
     for game in self.games:
-      html += '<tr>'
-      html += '<td><a href="{}" target="_blank">{}</a></td>'.format(game.url(), game.name)
-      html += '<td><code>{}</code></td>'.format(game.region)
-      html += '<td><code>{}</code></td>'.format(game.revision)
-      html += '<td><code>{}</code></td>'.format(game.board)
-      html += '<td><code>{}</code></td>'.format(hex(game.rom_size()))
-      html += '</tr>'
-    html += '</tbody></table></section>'
-    return html
+      file.write('<tr>')
+      file.write(f'<td><a href="{game.url()}" target="_blank">{game.name}</a></td>')
+      file.write(f'<td><code>{game.region}</code></td>')
+      file.write(f'<td><code>{game.revision}</code></td>')
+      file.write(f'<td><code>{game.board}</code></td>')
+      file.write(f'<td><code>{hex(game.rom_size())}</code></td>')
+      file.write('</tr>')
+    file.write('</tbody>')
+    file.write('</table>')
+    file.write('</section>')
 
   def generate(self):
     for game in self.games:
       game.generate()
 
-    Path(os.path.join(OUTPATH, "games", self.hash)).mkdir(parents=True, exist_ok=True)
-    Path(os.path.join(OUTPATH, "games", self.hash, "index.html")).open("w").write(html_page(self.html()))
+    outdir = Path(OUTPATH, "games", self.hash)
+    outdir.mkdir(parents=True, exist_ok=True)
+    write_html(Path(outdir, "index.html").open("w"), self.write)
 
   def url(self):
     return f'/games/{self.hash}'
@@ -237,22 +263,25 @@ class Index:
   def __init__(self, categories: dict):
     self.categories = categories
 
-  def html(self):
-    html = ""
+  def write(self, file):
     for name, pages in sorted(self.categories.items()):
-      html += '<section><header>{}</header><div>'.format(name)
+      file.write('<section>')
+      file.write(f'<header>{name}</header>')
+      file.write('<div>')
       for page in pages:
-        html += '<a href="{}" target="_blank">{}</a><br/>'.format(page.url(), page.name)
-      html += '</div></section>'
-    return html
+        file.write(f'<a href="{page.url()}" target="_blank">{page.name}</a>')
+        file.write('<br/>')
+      file.write('</div>')
+      file.write('</section>')
 
   def generate(self):
     for pages in self.categories.values():
       for page in pages:
         page.generate()
 
-    Path(OUTPATH).mkdir(parents=True, exist_ok=True)
-    Path(os.path.join(OUTPATH, "index.html")).open("w").write(html_page(self.html()))
+    outdir = Path(OUTPATH)
+    outdir.mkdir(parents=True, exist_ok=True)
+    write_html(Path(outdir, "index.html").open("w"), self.write)
 
 # Static site generation
 categories = {}
@@ -268,4 +297,11 @@ for filename in glob("Manifests/**/*.bml", recursive=True):
     raise Exception(f"unexpected path {path[0]}")
   categories.setdefault(category, []).append(page)
 
-Index(categories).generate()
+def main():
+  start = time.time()
+  logging.info("Starting compilation.")
+  Index(categories).generate()
+  logging.info("Done in {:.4f}s.".format(time.time() - start))
+
+if __name__ == "__main__":
+  main()
